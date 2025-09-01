@@ -1,70 +1,67 @@
-import { Actor } from 'apify';
-import { CheerioCrawler } from 'crawlee';
-import fs from 'fs';
+import { CheerioCrawler, Dataset, KeyValueStore } from 'crawlee';
 
-await Actor.init();
+const startUrl = 'https://www.imovirtual.com/comprar/apartamento/';
 
-const BASE_URL = 'https://www.imovirtual.com/comprar/apartamento/';
-
-const locations = {};
-
-function normalize(text) {
-    return text.normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function generateAliases(slug) {
-    const aliases = new Set();
-    aliases.add(slug);
-    aliases.add(slug.replace(/-/g, ' '));
-
-    if (slug.includes('-e-')) {
-        const parts = slug.split('-e-');
-        for (const part of parts) {
-            aliases.add(part);
-            aliases.add(part.replace(/-/g, ' '));
+async function extractLinks($, selector) {
+    const links = [];
+    $(selector).each((_, el) => {
+        const href = $(el).attr('href');
+        const name = $(el).text().trim();
+        if (href && name) {
+            links.push({
+                name,
+                url: new URL(href, startUrl).toString(),
+            });
         }
-    }
-    return Array.from(aliases);
+    });
+    return links;
 }
 
-const crawler = new CheerioCrawler({
-    async requestHandler({ $, request }) {
-        console.log(`✅ Visitando: ${request.url}`);
+async function run() {
+    const locations = {};
 
-        $('a[href*="/comprar/apartamento/"]').each((_, el) => {
-            const href = $(el).attr('href');
-            if (!href) return;
-
-            const parts = href.split('/').filter(Boolean);
-            const idx = parts.indexOf('apartamento');
-            if (idx === -1) return;
-
-            const remainder = parts.slice(idx + 1);
-            if (remainder.length >= 3) {
-                const [district, concelho, freg] = remainder;
-                if (!locations[district]) locations[district] = {};
-                if (!locations[district][concelho]) locations[district][concelho] = {};
-
-                if (!locations[district][concelho][freg]) {
-                    locations[district][concelho][freg] = generateAliases(freg);
+    const crawler = new CheerioCrawler({
+        async requestHandler({ request, $, enqueueLinks, log }) {
+            if (request.userData.type === 'START') {
+                log.info('📍 A extrair distritos...');
+                const districts = await extractLinks($, 'a[href*="/comprar/apartamento/"]'); 
+                for (const d of districts) {
+                    locations[d.name] = {};
+                    await crawler.addRequests([{
+                        url: d.url,
+                        userData: { type: 'DISTRICT', district: d.name },
+                    }]);
                 }
             }
-        });
-    }
-});
 
-await crawler.run([BASE_URL]);
+            if (request.userData.type === 'DISTRICT') {
+                log.info(`🏙️ A extrair concelhos de ${request.userData.district}...`);
+                const councils = await extractLinks($, 'a[href*="/comprar/apartamento/"]');
+                for (const c of councils) {
+                    locations[request.userData.district][c.name] = [];
+                    await crawler.addRequests([{
+                        url: c.url,
+                        userData: { type: 'COUNCIL', district: request.userData.district, council: c.name },
+                    }]);
+                }
+            }
 
-// Guardar localmente
-fs.writeFileSync('locations.json', JSON.stringify(locations, null, 2), 'utf8');
+            if (request.userData.type === 'COUNCIL') {
+                log.info(`🏘️ A extrair freguesias de ${request.userData.council}...`);
+                const parishes = await extractLinks($, 'a[href*="/comprar/apartamento/"]');
+                for (const p of parishes) {
+                    locations[request.userData.district][request.userData.council].push(p.name);
+                }
+            }
+        },
+    });
 
-// Guardar no dataset Apify
-await Actor.pushData({ createdAt: new Date().toISOString(), locations });
+    await crawler.run([{ url: startUrl, userData: { type: 'START' } }]);
 
-console.log('✅ locations.json gerado');
-await Actor.exit();
+    // Guardar no OUTPUT
+    const store = await KeyValueStore.open();
+    await store.setValue('locations.json', locations);
+    console.log('✅ locations.json gerado com sucesso!');
+}
+
+run();
