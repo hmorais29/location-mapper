@@ -2,21 +2,18 @@ import { Actor } from "apify";
 
 await Actor.init();
 
-// Função para chamar o endpoint do Imovirtual
-async function getLocationDetails(locationId) {
+// Função para chamar o endpoint searchLocations
+async function searchLocations(query) {
     const baseUrl = "https://www.imovirtual.com/api/query";
-    const variables = {
-        id: locationId,
-        locationLevelLikeDistrictAndSubdistrict: ["parish", "neighborhood"]
-    };
+    const variables = { query };
     const extensions = {
         persistedQuery: {
-            sha256Hash: "0a4a1880e6a922d070725b0f6b114c3096d2675950e1da22f4686c1158add5f2",
+            sha256Hash: "bf12aa8f69e91f08924d6c5adcb6dbb67d6b8e4b6e74a1c37d7468f54b1e82a1", // hash usado no searchLocations
             version: 1
         }
     };
 
-    const url = `${baseUrl}?operationName=locationDetails&variables=${encodeURIComponent(
+    const url = `${baseUrl}?operationName=searchLocations&variables=${encodeURIComponent(
         JSON.stringify(variables)
     )}&extensions=${encodeURIComponent(JSON.stringify(extensions))}`;
 
@@ -28,7 +25,7 @@ async function getLocationDetails(locationId) {
     });
 
     if (!response.ok) {
-        throw new Error(`❌ Erro ao obter ${locationId}: ${response.status} ${response.statusText}`);
+        throw new Error(`❌ Erro no searchLocations(${query}): ${response.status} ${response.statusText}`);
     }
 
     return response.json();
@@ -36,23 +33,29 @@ async function getLocationDetails(locationId) {
 
 async function run() {
     const input = await Actor.getInput();
-    if (!input?.locations || !Array.isArray(input.locations)) {
-        throw new Error("⚠️ O input.json precisa de conter { locations: [ ... ] }");
+    if (!input?.queries || !Array.isArray(input.queries)) {
+        throw new Error("⚠️ O input.json precisa de conter { queries: [ ... ] }");
     }
 
-    for (const locationId of input.locations) {
+    for (const query of input.queries) {
         try {
-            console.log(`📡 A obter localizações para: ${locationId}`);
-            const data = await getLocationDetails(locationId);
+            console.log(`🔎 A pesquisar: ${query}`);
+            const data = await searchLocations(query);
 
-            await Actor.pushData({
-                locationId,
-                data
-            });
-
-            console.log(`✅ Sucesso: ${locationId}`);
+            if (data?.data?.searchLocations?.length) {
+                for (const loc of data.data.searchLocations) {
+                    await Actor.pushData({
+                        id: loc.id,
+                        name: loc.name,
+                        type: loc.type
+                    });
+                }
+                console.log(`✅ Encontrado: ${query}`);
+            } else {
+                console.warn(`⚠️ Nada encontrado para: ${query}`);
+            }
         } catch (err) {
-            console.error(`❌ Falhou ${locationId}:`, err.message);
+            console.error(`❌ Falhou query "${query}":`, err.message);
         }
     }
 }
