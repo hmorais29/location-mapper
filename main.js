@@ -1,5 +1,4 @@
 import { Actor } from "apify";
-import fetch from "node-fetch";
 
 await Actor.init();
 
