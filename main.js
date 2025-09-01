@@ -1,67 +1,24 @@
-import { CheerioCrawler, Dataset, KeyValueStore } from 'crawlee';
-
-const startUrl = 'https://www.imovirtual.com/comprar/apartamento/';
-
-async function extractLinks($, selector) {
-    const links = [];
-    $(selector).each((_, el) => {
-        const href = $(el).attr('href');
-        const name = $(el).text().trim();
-        if (href && name) {
-            links.push({
-                name,
-                url: new URL(href, startUrl).toString(),
-            });
-        }
-    });
-    return links;
-}
+import fetch from 'node-fetch';
+import { KeyValueStore } from 'crawlee';
 
 async function run() {
-    const locations = {};
+    const url = 'https://www.imovirtual.com/api/locations';
+    console.log(`📡 A obter localizações de ${url}...`);
 
-    const crawler = new CheerioCrawler({
-        async requestHandler({ request, $, enqueueLinks, log }) {
-            if (request.userData.type === 'START') {
-                log.info('📍 A extrair distritos...');
-                const districts = await extractLinks($, 'a[href*="/comprar/apartamento/"]'); 
-                for (const d of districts) {
-                    locations[d.name] = {};
-                    await crawler.addRequests([{
-                        url: d.url,
-                        userData: { type: 'DISTRICT', district: d.name },
-                    }]);
-                }
-            }
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Erro ao obter dados: ${response.statusText}`);
+    }
 
-            if (request.userData.type === 'DISTRICT') {
-                log.info(`🏙️ A extrair concelhos de ${request.userData.district}...`);
-                const councils = await extractLinks($, 'a[href*="/comprar/apartamento/"]');
-                for (const c of councils) {
-                    locations[request.userData.district][c.name] = [];
-                    await crawler.addRequests([{
-                        url: c.url,
-                        userData: { type: 'COUNCIL', district: request.userData.district, council: c.name },
-                    }]);
-                }
-            }
+    const data = await response.json();
 
-            if (request.userData.type === 'COUNCIL') {
-                log.info(`🏘️ A extrair freguesias de ${request.userData.council}...`);
-                const parishes = await extractLinks($, 'a[href*="/comprar/apartamento/"]');
-                for (const p of parishes) {
-                    locations[request.userData.district][request.userData.council].push(p.name);
-                }
-            }
-        },
-    });
-
-    await crawler.run([{ url: startUrl, userData: { type: 'START' } }]);
-
-    // Guardar no OUTPUT
+    // A API já devolve a estrutura completa de distritos/concelhos/freguesias
     const store = await KeyValueStore.open();
-    await store.setValue('locations.json', locations);
-    console.log('✅ locations.json gerado com sucesso!');
+    await store.setValue('locations.json', data);
+
+    console.log('✅ locations.json guardado no OUTPUT!');
 }
 
-run();
+run().catch(err => {
+    console.error('❌ Erro:', err);
+});
