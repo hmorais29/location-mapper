@@ -1,7 +1,14 @@
 import fs from "fs";
-import fetch from "node-fetch";
 
 const ENDPOINT = "https://www.imovirtual.com/graphql";
+
+// distritos de Portugal
+const DISTRITOS = [
+  "Aveiro", "Beja", "Braga", "Bragança", "Castelo Branco",
+  "Coimbra", "Évora", "Faro", "Guarda", "Leiria", "Lisboa",
+  "Portalegre", "Porto", "Santarém", "Setúbal", "Viana do Castelo",
+  "Vila Real", "Viseu", "Madeira", "Açores"
+];
 
 async function fetchLocations(query) {
   console.log(`🔎 Query: ${query}`);
@@ -13,7 +20,7 @@ async function fetchLocations(query) {
       persistedQuery: {
         version: 1,
         sha256Hash:
-          "30ccad1c22aa1c4037487a73d351281d37e7b5ecb268a3d7e9fd99b2a7a83942", // hash usado pelo Imovirtual
+          "30ccad1c22aa1c4037487a73d351281d37e7b5ecb268a3d7e9fd99b2a7a83942",
       },
     },
   };
@@ -32,38 +39,40 @@ async function fetchLocations(query) {
   }
 
   const json = await res.json();
-
-  if (!json.data || !json.data.searchLocations) {
-    console.log("⚠️ Estrutura inesperada:", JSON.stringify(json).slice(0, 200));
-    return [];
-  }
-
-  return json.data.searchLocations;
+  return json?.data?.searchLocations || [];
 }
 
 async function run() {
-  console.log("📡 A obter localizações do Imovirtual...");
+  console.log("📡 A obter hierarquia completa de localizações...");
 
-  // Queries de teste primeiro
-  const queries = ["a", "sa", "lis"];
-  const seen = new Set();
   const results = [];
+  const seen = new Set();
 
-  for (const q of queries) {
-    try {
-      const locs = await fetchLocations(q);
-      for (const loc of locs) {
-        if (!seen.has(loc.id)) {
-          seen.add(loc.id);
+  for (const distrito of DISTRITOS) {
+    const concelhos = await fetchLocations(distrito);
+
+    for (const concelho of concelhos) {
+      if (!seen.has(concelho.id)) {
+        seen.add(concelho.id);
+        results.push({
+          id: concelho.id,
+          name: concelho.name,
+          type: concelho.type,
+        });
+      }
+
+      // agora pedir freguesias dentro do concelho
+      const freguesias = await fetchLocations(concelho.name);
+      for (const freguesia of freguesias) {
+        if (!seen.has(freguesia.id)) {
+          seen.add(freguesia.id);
           results.push({
-            id: loc.id,
-            name: loc.name,
-            type: loc.type,
+            id: freguesia.id,
+            name: freguesia.name,
+            type: freguesia.type,
           });
         }
       }
-    } catch (err) {
-      console.error(`❌ Erro na query "${q}":`, err.message);
     }
   }
 
