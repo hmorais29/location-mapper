@@ -1,63 +1,47 @@
+// main.js do location-mapper (versão zero-input)
+
+import fs from "fs";
+import fetch from "node-fetch";
 import { Actor } from "apify";
 
 await Actor.init();
 
-// Função para chamar o endpoint searchLocations
-async function searchLocations(query) {
-    const baseUrl = "https://www.imovirtual.com/api/query";
-    const variables = { query };
-    const extensions = {
-        persistedQuery: {
-            sha256Hash: "bf12aa8f69e91f08924d6c5adcb6dbb67d6b8e4b6e74a1c37d7468f54b1e82a1", // hash usado no searchLocations
-            version: 1
-        }
-    };
+async function run() {
+    console.log("📡 A obter localizações do Imovirtual...");
 
-    const url = `${baseUrl}?operationName=searchLocations&variables=${encodeURIComponent(
-        JSON.stringify(variables)
-    )}&extensions=${encodeURIComponent(JSON.stringify(extensions))}`;
+    // Endpoint de pesquisa de localizações
+    const url = "https://www.imovirtual.com/api/query?operationName=searchLocations&variables=%7B%22query%22%3A%22%22%7D&extensions=%7B%22persistedQuery%22%3A%7B%22sha256Hash%22%3A%2230ccad1c22aa1c4037487a73d351281d37e7b5ecb268a3d7e9fd99b2a7a83942%22%2C%22version%22%3A1%7D%7D";
 
     const response = await fetch(url, {
         headers: {
-            "accept": "application/graphql-response+json, application/graphql+json, application/json",
-            "user-agent": "Mozilla/5.0 (compatible; ApifyBot/1.0; +https://apify.com)"
-        }
+            "accept": "application/json",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        },
     });
 
     if (!response.ok) {
-        throw new Error(`❌ Erro no searchLocations(${query}): ${response.status} ${response.statusText}`);
+        throw new Error(`❌ Erro no fetch: ${response.status} ${response.statusText}`);
     }
 
-    return response.json();
-}
+    const data = await response.json();
 
-async function run() {
-    const input = await Actor.getInput();
-    if (!input?.queries || !Array.isArray(input.queries)) {
-        throw new Error("⚠️ O input.json precisa de conter { queries: [ ... ] }");
+    if (!data?.data?.searchLocations) {
+        throw new Error("❌ Estrutura inesperada na resposta do Imovirtual");
     }
 
-    for (const query of input.queries) {
-        try {
-            console.log(`🔎 A pesquisar: ${query}`);
-            const data = await searchLocations(query);
+    // Extrair os campos relevantes
+    const cleanLocations = data.data.searchLocations.map(loc => ({
+        id: loc.id,
+        name: loc.name,
+        type: loc.type,
+    }));
 
-            if (data?.data?.searchLocations?.length) {
-                for (const loc of data.data.searchLocations) {
-                    await Actor.pushData({
-                        id: loc.id,
-                        name: loc.name,
-                        type: loc.type
-                    });
-                }
-                console.log(`✅ Encontrado: ${query}`);
-            } else {
-                console.warn(`⚠️ Nada encontrado para: ${query}`);
-            }
-        } catch (err) {
-            console.error(`❌ Falhou query "${query}":`, err.message);
-        }
-    }
+    console.log(`✅ Extraídas ${cleanLocations.length} localizações`);
+
+    // Guardar no dataset (KeyValueStore)
+    await Actor.setValue("locations.json", cleanLocations);
+
+    console.log("📂 locations.json gravado com sucesso!");
 }
 
 await run();
