@@ -1,6 +1,6 @@
 import fs from "fs";
 
-const ENDPOINT = "https://www.imovirtual.com/graphql";
+const BASE_URL = "https://www.imovirtual.com/api/query";
 
 // distritos de Portugal
 const DISTRITOS = [
@@ -10,91 +10,56 @@ const DISTRITOS = [
   "Vila Real", "Viseu", "Madeira", "Açores"
 ];
 
-async function testEndpoint() {
-  console.log("🔍 A testar conectividade do endpoint...");
-  
-  try {
-    // Teste básico de conectividade
-    const testResponse = await fetch("https://www.imovirtual.com", {
-      method: "GET",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-      }
-    });
-    console.log(`✅ Site principal acessível: ${testResponse.status}`);
-  } catch (error) {
-    console.log(`❌ Site principal não acessível: ${error.message}`);
-  }
-
-  // Teste do endpoint GraphQL
-  try {
-    const graphqlResponse = await fetch(ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "*/*",
-        "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
-        "Origin": "https://www.imovirtual.com",
-        "Referer": "https://www.imovirtual.com/"
-      },
-      body: JSON.stringify({
-        query: "{ __typename }"
-      })
-    });
-    console.log(`📡 GraphQL endpoint status: ${graphqlResponse.status}`);
-    
-    if (!graphqlResponse.ok) {
-      const errorText = await graphqlResponse.text();
-      console.log(`❌ Resposta do GraphQL: ${errorText.substring(0, 200)}...`);
-    } else {
-      const result = await graphqlResponse.json();
-      console.log("✅ GraphQL endpoint acessível:", result);
-    }
-  } catch (error) {
-    console.log(`❌ Erro no GraphQL endpoint: ${error.message}`);
-  }
-}
+// Hash para searchLocations (precisa ser descoberto)
+// O hash que tens é para locationDetails, não searchLocations
+const SEARCH_LOCATIONS_HASH = "30ccad1c22aa1c4037487a73d351281d37e7b5ecb268a3d7e9fd99b2a7a83942"; // Este pode não estar correcto
 
 async function fetchLocations(query) {
   console.log(`🔎 Query: ${query}`);
 
-  const body = {
+  // Construir URL com parâmetros
+  const params = new URLSearchParams({
     operationName: "searchLocations",
-    variables: { query },
-    extensions: {
+    variables: JSON.stringify({ query }),
+    extensions: JSON.stringify({
       persistedQuery: {
         version: 1,
-        sha256Hash: "30ccad1c22aa1c4037487a73d351281d37e7b5ecb268a3d7e9fd99b2a7a83942",
-      },
-    },
-  };
+        sha256Hash: SEARCH_LOCATIONS_HASH,
+      }
+    })
+  });
+
+  const url = `${BASE_URL}?${params}`;
+  console.log(`🌐 URL: ${url}`);
 
   try {
-    const res = await fetch(ENDPOINT, {
-      method: "POST",
+    const res = await fetch(url, {
+      method: "GET",
       headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "*/*",
-        "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
-        "Origin": "https://www.imovirtual.com",
-        "Referer": "https://www.imovirtual.com/",
-        "x-apollo-operation-name": "searchLocations",
-      },
-      body: JSON.stringify(body),
+        "accept": "application/graphql-response+json, application/graphql+json, application/json, text/event-stream, multipart/mixed",
+        "accept-encoding": "gzip, deflate, br, zstd",
+        "accept-language": "pt-PT,pt;q=0.9,en;q=0.8",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+        "referer": "https://www.imovirtual.com/",
+        "sec-ch-ua": '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin"
+      }
     });
 
-    console.log(`📊 Status: ${res.status}, Headers:`, Object.fromEntries(res.headers.entries()));
+    console.log(`📊 Status: ${res.status}`);
 
     if (!res.ok) {
       const errorText = await res.text();
-      console.log(`❌ Erro HTTP ${res.status}: ${errorText.substring(0, 300)}`);
+      console.log(`❌ Erro HTTP ${res.status}: ${errorText.substring(0, 200)}...`);
       return [];
     }
 
     const json = await res.json();
-    console.log(`📍 Resposta completa:`, JSON.stringify(json, null, 2));
+    console.log(`📍 Resposta:`, JSON.stringify(json, null, 2));
     
     const locations = json?.data?.searchLocations || [];
     console.log(`📍 Encontradas ${locations.length} localizações para "${query}"`);
@@ -105,104 +70,125 @@ async function fetchLocations(query) {
   }
 }
 
-async function tryAlternativeQuery(query) {
-  console.log(`🔄 Tentando query alternativa para: ${query}`);
-  
-  // Tentar query sem persistedQuery
-  const alternativeBody = {
-    query: `
-      query searchLocations($query: String!) {
-        searchLocations(query: $query) {
-          id
-          name
-          type
-        }
-      }
-    `,
-    variables: { query }
-  };
+async function testDifferentHashes(query) {
+  // Hashes possíveis (o teu exemplo + o original)
+  const possibleHashes = [
+    "30ccad1c22aa1c4037487a73d351281d37e7b5ecb268a3d7e9fd99b2a7a83942", // original
+    "0a4a1880e6a922d070725b0f6b114c3096d2675950e1da22f4686c1158add5f2"  // do teu exemplo
+  ];
 
-  try {
-    const res = await fetch(ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "*/*",
-        "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
-        "Origin": "https://www.imovirtual.com",
-        "Referer": "https://www.imovirtual.com/"
-      },
-      body: JSON.stringify(alternativeBody),
+  for (const hash of possibleHashes) {
+    console.log(`🧪 Testando hash: ${hash.substring(0, 16)}...`);
+    
+    const params = new URLSearchParams({
+      operationName: "searchLocations",
+      variables: JSON.stringify({ query }),
+      extensions: JSON.stringify({
+        persistedQuery: {
+          version: 1,
+          sha256Hash: hash,
+        }
+      })
     });
 
-    console.log(`🔄 Status alternativo: ${res.status}`);
+    const url = `${BASE_URL}?${params}`;
 
-    if (res.ok) {
-      const json = await res.json();
-      console.log(`🔄 Resposta alternativa:`, json);
-      return json?.data?.searchLocations || [];
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          "accept": "application/graphql-response+json, application/graphql+json, application/json",
+          "accept-language": "pt-PT,pt;q=0.9,en;q=0.8",
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "referer": "https://www.imovirtual.com/",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-site": "same-origin"
+        }
+      });
+
+      console.log(`   Status: ${res.status}`);
+      
+      if (res.ok) {
+        const result = await res.json();
+        console.log(`   ✅ Hash funciona!`, result);
+        return hash;
+      }
+    } catch (error) {
+      console.log(`   ❌ Erro: ${error.message}`);
     }
-  } catch (error) {
-    console.log(`🔄 Erro na query alternativa: ${error.message}`);
   }
   
-  return [];
+  return null;
+}
+
+async function discoverSearchOperation() {
+  console.log("🔍 A tentar descobrir a operação correcta...");
+  
+  // Operações possíveis
+  const operations = ["searchLocations", "locationSearch", "findLocations", "autocomplete"];
+  
+  for (const operation of operations) {
+    console.log(`🧪 Testando operação: ${operation}`);
+    
+    const params = new URLSearchParams({
+      operationName: operation,
+      variables: JSON.stringify({ query: "lisboa" }),
+      extensions: JSON.stringify({
+        persistedQuery: {
+          version: 1,
+          sha256Hash: "0a4a1880e6a922d070725b0f6b114c3096d2675950e1da22f4686c1158add5f2",
+        }
+      })
+    });
+
+    const url = `${BASE_URL}?${params}`;
+
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          "accept": "application/graphql-response+json, application/graphql+json, application/json",
+          "accept-language": "pt-PT,pt;q=0.9,en;q=0.8",
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "referer": "https://www.imovirtual.com/"
+        }
+      });
+
+      console.log(`   Status: ${res.status}`);
+      
+      if (res.status !== 404) {
+        const result = await res.text();
+        console.log(`   🎯 Resposta para ${operation}:`, result.substring(0, 300));
+      }
+    } catch (error) {
+      console.log(`   ❌ Erro: ${error.message}`);
+    }
+  }
 }
 
 async function run() {
-  console.log("📡 A obter hierarquia completa de localizações...");
+  console.log("📡 A descobrir endpoint correcto...");
 
-  // Primeiro testar a conectividade
-  await testEndpoint();
+  // Primeiro descobrir qual operação usar
+  await discoverSearchOperation();
 
-  // Testar com uma query simples
-  console.log("\n🧪 Testando com query simples...");
-  const testResult = await fetchLocations("lisboa");
+  // Testar diferentes hashes
+  const workingHash = await testDifferentHashes("lisboa");
   
-  if (testResult.length === 0) {
-    console.log("\n🔄 Tentando abordagem alternativa...");
-    const altResult = await tryAlternativeQuery("lisboa");
-    
-    if (altResult.length === 0) {
-      console.log("❌ Nenhuma abordagem funcionou. O endpoint pode ter mudado ou ter protecções anti-bot.");
-      console.log("💡 Sugestões:");
-      console.log("   1. Verificar se o site imovirtual.com ainda usa este endpoint");
-      console.log("   2. Inspecionar as Network requests no browser ao usar o site");
-      console.log("   3. Verificar se precisas de cookies ou tokens de autenticação");
-      return;
-    }
+  if (!workingHash) {
+    console.log("❌ Não consegui encontrar um hash que funcione.");
+    console.log("💡 Precisas de:");
+    console.log("   1. Ir ao site imovirtual.com");
+    console.log("   2. Fazer uma pesquisa de localização");
+    console.log("   3. Copiar a request completa do DevTools");
+    console.log("   4. Partilhar o operationName, hash e parâmetros correctos");
+    return;
   }
 
-  console.log("✅ Endpoint funciona! A continuar com extração completa...");
-
-  // Resto do código original se o teste passar
-  const results = [];
-  const seen = new Set();
-
-  // Apenas testar com alguns distritos primeiro
-  const testDistritos = DISTRITOS.slice(0, 3);
-
-  for (let i = 0; i < testDistritos.length; i++) {
-    const distrito = testDistritos[i];
-    console.log(`\n🏛️ Testando distrito ${i + 1}/${testDistritos.length}: ${distrito}`);
-
-    try {
-      const distritoSearch = distrito.substring(0, 3).toLowerCase();
-      const candidatos = await fetchLocations(distritoSearch);
-
-      if (candidatos.length > 0) {
-        console.log("✅ Encontrados resultados! A continuar com implementação completa...");
-        break;
-      }
-
-    } catch (error) {
-      console.error(`❌ Erro ao processar distrito ${distrito}:`, error.message);
-      continue;
-    }
-  }
-
-  console.log("\n📊 Teste concluído.");
+  console.log(`✅ Hash que funciona: ${workingHash}`);
+  
+  // Se chegou aqui, continuar com o resto da implementação
+  console.log("🎯 A continuar com extração completa...");
 }
 
 run().catch((err) => {
