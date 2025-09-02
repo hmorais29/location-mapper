@@ -79,3 +79,32 @@ async function run() {
         results.push({
           id: concelho.id,
           name: concelho.name,
+          type: concelho.type,
+        });
+      }
+
+      // freguesias do concelho
+      const freguesias = await fetchLocations(concelho.name);
+      for (const freguesia of freguesias) {
+        if (!seen.has(freguesia.id)) {
+          seen.add(freguesia.id);
+          results.push({
+            id: freguesia.id,
+            name: freguesia.name,
+            type: freguesia.type,
+          });
+        }
+      }
+    }
+  }
+
+  console.log(`✅ Extraídas ${results.length} localizações únicas`);
+
+  fs.writeFileSync("locations.json", JSON.stringify(results, null, 2));
+  console.log("📂 locations.json gravado com sucesso!");
+}
+
+run().catch((err) => {
+  console.error("❌ Erro fatal:", err);
+  process.exit(1);
+});
