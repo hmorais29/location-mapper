@@ -88,21 +88,14 @@ async function makeGraphQLRequest(query) {
         }
     };
 
-    // Headers exatos da captura do DevTools
+    // Headers simplificados mas essenciais
     const headers = {
-        ':authority': 'www.imovirtual.com',
-        ':method': 'POST',
-        ':path': '/api/query',
-        ':scheme': 'https',
         'accept': 'application/graphql-response+json, application/graphql+json, application/json, text/event-stream, multipart/mixed',
-        'accept-encoding': 'gzip, deflate, br, zstd',
+        'accept-encoding': 'gzip, deflate, br',
         'accept-language': 'en-US,en;q=0.9,pt;q=0.8',
         'content-type': 'application/json',
         'origin': 'https://www.imovirtual.com',
         'referer': 'https://www.imovirtual.com/',
-        'sec-ch-ua': '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
         'sec-fetch-dest': 'empty',
         'sec-fetch-mode': 'cors',
         'sec-fetch-site': 'same-origin',
@@ -114,9 +107,7 @@ async function makeGraphQLRequest(query) {
             json: payload,
             headers: headers,
             responseType: 'json',
-            timeout: {
-                request: 30000
-            }
+            timeout: 30000  // timeout simples em ms
         });
 
         console.log(`✅ Resposta recebida com status: ${response.statusCode}`);
@@ -130,7 +121,7 @@ async function makeGraphQLRequest(query) {
         console.error(`❌ Erro na requisição para "${query}":`, error.message);
         if (error.response) {
             console.error(`📊 Status: ${error.response.statusCode}`);
-            console.error(`📝 Resposta:`, JSON.stringify(error.response.body, null, 2));
+            console.error(`📄 Resposta:`, JSON.stringify(error.response.body, null, 2));
         }
         throw error;
     }
@@ -233,7 +224,7 @@ function processLocations(data, queryTerm) {
 Actor.main(async () => {
     console.log('📡 A iniciar extração de localizações do Imovirtual...');
 
-    // Testar conectividade primeiro
+    // Testar conectividade primeiro com configurações simplificadas
     try {
         const testResponse = await gotScraping.get('https://www.imovirtual.com/', { 
             timeout: 10000,
@@ -244,6 +235,7 @@ Actor.main(async () => {
         console.log(`✅ Site principal acessível: ${testResponse.statusCode}`);
     } catch (error) {
         console.error('❌ Erro ao aceder ao site principal:', error.message);
+        console.log('🔄 Continuando mesmo assim...');
     }
 
     const allLocations = {
@@ -253,12 +245,9 @@ Actor.main(async () => {
         neighborhoods: new Set()
     };
 
-    // Queries principais para Portugal - começar com as que têm mais probabilidade de funcionar
+    // Queries principais para Portugal - começar pequeno para testar
     const mainQueries = [
-        'lisboa', 'porto', 'coimbra', 'braga', 'setúbal', 'faro', 
-        'aveiro', 'leiria', 'viseu', 'évora', 'beja', 'castelo branco', 
-        'guarda', 'portalegre', 'santarém', 'viana do castelo', 
-        'vila real', 'bragança'
+        'lisboa', 'porto', 'coimbra', 'braga', 'setúbal'
     ];
 
     let successfulQueries = 0;
@@ -266,7 +255,7 @@ Actor.main(async () => {
 
     for (const query of mainQueries) {
         try {
-            console.log(`\n🔄 Processando query ${totalProcessed + 1}/${mainQueries.length}: "${query}"`);
+            console.log(`\n📄 Processando query ${totalProcessed + 1}/${mainQueries.length}: "${query}"`);
             
             const data = await makeGraphQLRequest(query);
             
@@ -283,13 +272,14 @@ Actor.main(async () => {
                 console.log(`✅ Query "${query}" processada com sucesso`);
             } else {
                 console.log(`⚠️ Sem dados válidos para "${query}"`);
+                console.log('Resposta completa:', JSON.stringify(data, null, 2));
             }
             
             totalProcessed++;
             
             // Pausa entre requests para evitar rate limiting
-            console.log('⏳ Aguardando 3 segundos...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            console.log('⏳ Aguardando 2 segundos...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
             
         } catch (error) {
             console.error(`❌ Falha na query "${query}":`, error.message);
