@@ -1,197 +1,272 @@
-import fs from "fs";
+import { Actor } from 'apify';
+import { gotScraping } from 'got-scraping';
 
-const BASE_URL = "https://www.imovirtual.com/api/query";
+const IMOVIRTUAL_API = 'https://www.imovirtual.com/api/query';
 
-// distritos de Portugal
-const DISTRITOS = [
-  "Aveiro", "Beja", "Braga", "Bragança", "Castelo Branco",
-  "Coimbra", "Évora", "Faro", "Guarda", "Leiria", "Lisboa",
-  "Portalegre", "Porto", "Santarém", "Setúbal", "Viana do Castelo",
-  "Vila Real", "Viseu", "Madeira", "Açores"
-];
-
-// Hash para searchLocations (precisa ser descoberto)
-// O hash que tens é para locationDetails, não searchLocations
-const SEARCH_LOCATIONS_HASH = "30ccad1c22aa1c4037487a73d351281d37e7b5ecb268a3d7e9fd99b2a7a83942"; // Este pode não estar correcto
-
-async function fetchLocations(query) {
-  console.log(`🔎 Query: ${query}`);
-
-  // Construir URL com parâmetros
-  const params = new URLSearchParams({
-    operationName: "searchLocations",
-    variables: JSON.stringify({ query }),
-    extensions: JSON.stringify({
-      persistedQuery: {
-        version: 1,
-        sha256Hash: SEARCH_LOCATIONS_HASH,
+// Query GraphQL exata do DevTools
+const AUTOCOMPLETE_QUERY = `query autocomplete($query: String!, $ranking: RankingSystemInput, $levels: [String!], $isLocationSearch: Boolean!, $locationLevelLikeDistrictAndSubdistrict: [String!]) {
+  autocomplete(query: $query, ranking: $ranking, levels: $levels) {
+    ... on FoundLocations {
+      locationsObjects {
+        id
+        detailedLevel
+        name
+        fullName
+        parents {
+          id
+          detailedLevel
+          name
+          fullName
+          __typename
+        }
+        parentIds
+        children(
+          input: {limit: 4, filters: {levels: $locationLevelLikeDistrictAndSubdistrict}}
+        ) @include(if: $isLocationSearch) {
+          id
+          detailedLevel
+          name
+          fullName
+          parents {
+            id
+            detailedLevel
+            name
+            fullName
+            __typename
+          }
+          children(
+            input: {limit: 1, filters: {levels: $locationLevelLikeDistrictAndSubdistrict}}
+          ) {
+            id
+            detailedLevel
+            name
+            fullName
+            parents {
+              id
+              detailedLevel
+              name
+              fullName
+              __typename
+            }
+            __typename
+          }
+          __typename
+        }
+        __typename
       }
-    })
-  });
+      __typename
+    }
+    ... on ErrorInternal {
+      message
+      __typename
+    }
+    __typename
+  }
+}`;
 
-  const url = `${BASE_URL}?${params}`;
-  console.log(`🌐 URL: ${url}`);
+async function makeGraphQLRequest(query) {
+    console.log(`🔍 A pesquisar localizações para: ${query}`);
+    
+    const payload = {
+        extensions: {
+            persistedQuery: {
+                miss: true,
+                sha256Hash: "63dfe8182f8cd71a2493912ed138c743f8fdb43e741e11aff9e53bc34b85c9d6",
+                version: 1
+            }
+        },
+        operationName: "autocomplete",
+        query: AUTOCOMPLETE_QUERY,
+        variables: {
+            isLocationSearch: true,
+            locationLevelLikeDistrictAndSubdistrict: ["parish", "neighborhood"],
+            query: query,
+            ranking: {
+                type: "BLENDED_INFIX_LOOKUP_SUGGEST"
+            }
+        }
+    };
 
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      headers: {
-        "accept": "application/graphql-response+json, application/graphql+json, application/json, text/event-stream, multipart/mixed",
-        "accept-encoding": "gzip, deflate, br, zstd",
-        "accept-language": "pt-PT,pt;q=0.9,en;q=0.8",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
-        "referer": "https://www.imovirtual.com/",
-        "sec-ch-ua": '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin"
-      }
-    });
+    const headers = {
+        'Accept': 'application/graphql-response+json, application/graphql+json, application/json, text/event-stream, multipart/mixed',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        'Accept-Language': 'en-US,en;q=0.9,pt;q=0.8',
+        'Content-Type': 'application/json',
+        'Origin': 'https://www.imovirtual.com',
+        'Referer': 'https://www.imovirtual.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36',
+        'sec-ch-ua': '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin'
+    };
 
-    console.log(`📊 Status: ${res.status}`);
+    try {
+        const response = await gotScraping.post(IMOVIRTUAL_API, {
+            json: payload,
+            headers: headers,
+            responseType: 'json',
+            timeout: {
+                request: 30000
+            }
+        });
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.log(`❌ Erro HTTP ${res.status}: ${errorText.substring(0, 200)}...`);
-      return [];
+        console.log(`✅ Resposta recebida com status: ${response.statusCode}`);
+        return response.body;
+    } catch (error) {
+        console.error(`❌ Erro na requisição para "${query}":`, error.message);
+        if (error.response) {
+            console.error(`📊 Status: ${error.response.statusCode}`);
+            console.error(`📝 Resposta:`, error.response.body?.substring(0, 500));
+        }
+        throw error;
+    }
+}
+
+function processLocations(data) {
+    const locations = {
+        districts: new Map(),
+        councils: new Map(), 
+        parishes: new Map(),
+        neighborhoods: new Map()
+    };
+
+    if (!data?.data?.autocomplete?.locationsObjects) {
+        console.log('⚠️ Estrutura de dados inesperada:', JSON.stringify(data, null, 2));
+        return locations;
     }
 
-    const json = await res.json();
-    console.log(`📍 Resposta:`, JSON.stringify(json, null, 2));
-    
-    const locations = json?.data?.searchLocations || [];
-    console.log(`📍 Encontradas ${locations.length} localizações para "${query}"`);
+    const locationsObjects = data.data.autocomplete.locationsObjects;
+    console.log(`📊 Processando ${locationsObjects.length} localizações encontradas`);
+
+    for (const location of locationsObjects) {
+        const { id, detailedLevel, name, fullName, children } = location;
+        
+        switch (detailedLevel) {
+            case 'district':
+                locations.districts.set(id, { id, name, fullName });
+                break;
+            case 'council':
+                locations.councils.set(id, { id, name, fullName });
+                break;
+            case 'parish':
+                locations.parishes.set(id, { id, name, fullName });
+                break;
+            case 'neighborhood':
+                locations.neighborhoods.set(id, { id, name, fullName });
+                break;
+        }
+
+        // Processar children se existirem
+        if (children && Array.isArray(children)) {
+            for (const child of children) {
+                const { id: childId, detailedLevel: childLevel, name: childName, fullName: childFullName, children: grandChildren } = child;
+                
+                switch (childLevel) {
+                    case 'parish':
+                        locations.parishes.set(childId, { id: childId, name: childName, fullName: childFullName });
+                        break;
+                    case 'neighborhood':
+                        locations.neighborhoods.set(childId, { id: childId, name: childName, fullName: childFullName });
+                        break;
+                }
+
+                // Processar grandchildren (neighborhoods dentro de parishes)
+                if (grandChildren && Array.isArray(grandChildren)) {
+                    for (const grandChild of grandChildren) {
+                        if (grandChild.detailedLevel === 'neighborhood') {
+                            locations.neighborhoods.set(grandChild.id, { 
+                                id: grandChild.id, 
+                                name: grandChild.name, 
+                                fullName: grandChild.fullName 
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     return locations;
-  } catch (error) {
-    console.error(`❌ Erro ao fazer fetch para "${query}":`, error.message);
-    return [];
-  }
 }
 
-async function testDifferentHashes(query) {
-  // Hashes possíveis (o teu exemplo + o original)
-  const possibleHashes = [
-    "30ccad1c22aa1c4037487a73d351281d37e7b5ecb268a3d7e9fd99b2a7a83942", // original
-    "0a4a1880e6a922d070725b0f6b114c3096d2675950e1da22f4686c1158add5f2"  // do teu exemplo
-  ];
+Actor.main(async () => {
+    console.log('📡 A iniciar extração de localizações do Imovirtual...');
 
-  for (const hash of possibleHashes) {
-    console.log(`🧪 Testando hash: ${hash.substring(0, 16)}...`);
-    
-    const params = new URLSearchParams({
-      operationName: "searchLocations",
-      variables: JSON.stringify({ query }),
-      extensions: JSON.stringify({
-        persistedQuery: {
-          version: 1,
-          sha256Hash: hash,
-        }
-      })
-    });
-
-    const url = `${BASE_URL}?${params}`;
-
+    // Primeiro, testar conectividade
     try {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          "accept": "application/graphql-response+json, application/graphql+json, application/json",
-          "accept-language": "pt-PT,pt;q=0.9,en;q=0.8",
-          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "referer": "https://www.imovirtual.com/",
-          "sec-fetch-mode": "cors",
-          "sec-fetch-site": "same-origin"
-        }
-      });
-
-      console.log(`   Status: ${res.status}`);
-      
-      if (res.ok) {
-        const result = await res.json();
-        console.log(`   ✅ Hash funciona!`, result);
-        return hash;
-      }
+        const testResponse = await gotScraping.get('https://www.imovirtual.com/', { timeout: 10000 });
+        console.log(`✅ Site principal acessível: ${testResponse.statusCode}`);
     } catch (error) {
-      console.log(`   ❌ Erro: ${error.message}`);
+        console.error('❌ Erro ao aceder ao site principal:', error.message);
+        process.exit(1);
     }
-  }
-  
-  return null;
-}
 
-async function discoverSearchOperation() {
-  console.log("🔍 A tentar descobrir a operação correcta...");
-  
-  // Operações possíveis
-  const operations = ["searchLocations", "locationSearch", "findLocations", "autocomplete"];
-  
-  for (const operation of operations) {
-    console.log(`🧪 Testando operação: ${operation}`);
+    const allLocations = {
+        districts: new Map(),
+        councils: new Map(),
+        parishes: new Map(),
+        neighborhoods: new Map()
+    };
+
+    // Queries principais para obter cobertura completa
+    const mainQueries = [
+        'lisboa', 'porto', 'coimbra', 'braga', 'setúbal', 'faro', 'aveiro',
+        'leiria', 'viseu', 'évora', 'beja', 'castelo branco', 'guarda',
+        'portalegre', 'santarém', 'viana do castelo', 'vila real', 'bragança'
+    ];
+
+    let processedQueries = 0;
+
+    for (const query of mainQueries) {
+        try {
+            const data = await makeGraphQLRequest(query);
+            const locations = processLocations(data);
+            
+            // Combinar resultados
+            for (const [id, location] of locations.districts) allLocations.districts.set(id, location);
+            for (const [id, location] of locations.councils) allLocations.councils.set(id, location);
+            for (const [id, location] of locations.parishes) allLocations.parishes.set(id, location);
+            for (const [id, location] of locations.neighborhoods) allLocations.neighborhoods.set(id, location);
+            
+            processedQueries++;
+            console.log(`📈 Progresso: ${processedQueries}/${mainQueries.length} queries processadas`);
+            
+            // Pausa entre requests
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+        } catch (error) {
+            console.error(`❌ Falha na query "${query}":`, error.message);
+            continue;
+        }
+    }
+
+    // Preparar dados para output
+    const finalData = {
+        districts: Array.from(allLocations.districts.values()),
+        councils: Array.from(allLocations.councils.values()),
+        parishes: Array.from(allLocations.parishes.values()),
+        neighborhoods: Array.from(allLocations.neighborhoods.values()),
+        metadata: {
+            extractedAt: new Date().toISOString(),
+            totalDistricts: allLocations.districts.size,
+            totalCouncils: allLocations.councils.size,
+            totalParishes: allLocations.parishes.size,
+            totalNeighborhoods: allLocations.neighborhoods.size,
+            source: 'imovirtual.com'
+        }
+    };
+
+    console.log('📊 Extração concluída!');
+    console.log(`   🏛️ Distritos: ${finalData.metadata.totalDistricts}`);
+    console.log(`   🏘️ Concelhos: ${finalData.metadata.totalCouncils}`);
+    console.log(`   ⛪ Freguesias: ${finalData.metadata.totalParishes}`);
+    console.log(`   🏠 Bairros: ${finalData.metadata.totalNeighborhoods}`);
+
+    // Guardar no dataset do Apify
+    await Actor.pushData(finalData);
     
-    const params = new URLSearchParams({
-      operationName: operation,
-      variables: JSON.stringify({ query: "lisboa" }),
-      extensions: JSON.stringify({
-        persistedQuery: {
-          version: 1,
-          sha256Hash: "0a4a1880e6a922d070725b0f6b114c3096d2675950e1da22f4686c1158add5f2",
-        }
-      })
-    });
-
-    const url = `${BASE_URL}?${params}`;
-
-    try {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          "accept": "application/graphql-response+json, application/graphql+json, application/json",
-          "accept-language": "pt-PT,pt;q=0.9,en;q=0.8",
-          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "referer": "https://www.imovirtual.com/"
-        }
-      });
-
-      console.log(`   Status: ${res.status}`);
-      
-      if (res.status !== 404) {
-        const result = await res.text();
-        console.log(`   🎯 Resposta para ${operation}:`, result.substring(0, 300));
-      }
-    } catch (error) {
-      console.log(`   ❌ Erro: ${error.message}`);
-    }
-  }
-}
-
-async function run() {
-  console.log("📡 A descobrir endpoint correcto...");
-
-  // Primeiro descobrir qual operação usar
-  await discoverSearchOperation();
-
-  // Testar diferentes hashes
-  const workingHash = await testDifferentHashes("lisboa");
-  
-  if (!workingHash) {
-    console.log("❌ Não consegui encontrar um hash que funcione.");
-    console.log("💡 Precisas de:");
-    console.log("   1. Ir ao site imovirtual.com");
-    console.log("   2. Fazer uma pesquisa de localização");
-    console.log("   3. Copiar a request completa do DevTools");
-    console.log("   4. Partilhar o operationName, hash e parâmetros correctos");
-    return;
-  }
-
-  console.log(`✅ Hash que funciona: ${workingHash}`);
-  
-  // Se chegou aqui, continuar com o resto da implementação
-  console.log("🎯 A continuar com extração completa...");
-}
-
-run().catch((err) => {
-  console.error("❌ Erro fatal:", err);
-  process.exit(1);
+    console.log('✅ Dados guardados no dataset do Apify');
 });
