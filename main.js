@@ -49,40 +49,33 @@ async function run() {
   const seen = new Set();
 
   for (const distrito of DISTRITOS) {
-    const concelhos = await fetchLocations(distrito);
+    // procurar distrito pelas primeiras letras
+    const distritoSearch = distrito.substring(0, 3).toLowerCase();
+    const candidatos = await fetchLocations(distritoSearch);
 
+    const distritoMatch = candidatos.find(
+      (c) => c.type === "district" && c.name.toLowerCase().includes(distrito.toLowerCase())
+    );
+
+    if (!distritoMatch) {
+      console.warn(`⚠️ Não encontrei distrito para ${distrito}`);
+      continue;
+    }
+
+    if (!seen.has(distritoMatch.id)) {
+      seen.add(distritoMatch.id);
+      results.push({
+        id: distritoMatch.id,
+        name: distritoMatch.name,
+        type: distritoMatch.type,
+      });
+    }
+
+    // concelhos do distrito
+    const concelhos = await fetchLocations(distritoMatch.name);
     for (const concelho of concelhos) {
       if (!seen.has(concelho.id)) {
         seen.add(concelho.id);
         results.push({
           id: concelho.id,
           name: concelho.name,
-          type: concelho.type,
-        });
-      }
-
-      // agora pedir freguesias dentro do concelho
-      const freguesias = await fetchLocations(concelho.name);
-      for (const freguesia of freguesias) {
-        if (!seen.has(freguesia.id)) {
-          seen.add(freguesia.id);
-          results.push({
-            id: freguesia.id,
-            name: freguesia.name,
-            type: freguesia.type,
-          });
-        }
-      }
-    }
-  }
-
-  console.log(`✅ Extraídas ${results.length} localizações únicas`);
-
-  fs.writeFileSync("locations.json", JSON.stringify(results, null, 2));
-  console.log("📂 locations.json gravado com sucesso!");
-}
-
-run().catch((err) => {
-  console.error("❌ Erro fatal:", err);
-  process.exit(1);
-});
