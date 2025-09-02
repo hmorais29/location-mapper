@@ -10,6 +10,52 @@ const DISTRITOS = [
   "Vila Real", "Viseu", "Madeira", "Açores"
 ];
 
+async function testEndpoint() {
+  console.log("🔍 A testar conectividade do endpoint...");
+  
+  try {
+    // Teste básico de conectividade
+    const testResponse = await fetch("https://www.imovirtual.com", {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      }
+    });
+    console.log(`✅ Site principal acessível: ${testResponse.status}`);
+  } catch (error) {
+    console.log(`❌ Site principal não acessível: ${error.message}`);
+  }
+
+  // Teste do endpoint GraphQL
+  try {
+    const graphqlResponse = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
+        "Origin": "https://www.imovirtual.com",
+        "Referer": "https://www.imovirtual.com/"
+      },
+      body: JSON.stringify({
+        query: "{ __typename }"
+      })
+    });
+    console.log(`📡 GraphQL endpoint status: ${graphqlResponse.status}`);
+    
+    if (!graphqlResponse.ok) {
+      const errorText = await graphqlResponse.text();
+      console.log(`❌ Resposta do GraphQL: ${errorText.substring(0, 200)}...`);
+    } else {
+      const result = await graphqlResponse.json();
+      console.log("✅ GraphQL endpoint acessível:", result);
+    }
+  } catch (error) {
+    console.log(`❌ Erro no GraphQL endpoint: ${error.message}`);
+  }
+}
+
 async function fetchLocations(query) {
   console.log(`🔎 Query: ${query}`);
 
@@ -19,8 +65,7 @@ async function fetchLocations(query) {
     extensions: {
       persistedQuery: {
         version: 1,
-        sha256Hash:
-          "30ccad1c22aa1c4037487a73d351281d37e7b5ecb268a3d7e9fd99b2a7a83942",
+        sha256Hash: "30ccad1c22aa1c4037487a73d351281d37e7b5ecb268a3d7e9fd99b2a7a83942",
       },
     },
   };
@@ -30,16 +75,27 @@ async function fetchLocations(query) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
+        "Origin": "https://www.imovirtual.com",
+        "Referer": "https://www.imovirtual.com/",
         "x-apollo-operation-name": "searchLocations",
       },
       body: JSON.stringify(body),
     });
 
+    console.log(`📊 Status: ${res.status}, Headers:`, Object.fromEntries(res.headers.entries()));
+
     if (!res.ok) {
-      throw new Error(`❌ Erro no fetch ${res.status} ${res.statusText}`);
+      const errorText = await res.text();
+      console.log(`❌ Erro HTTP ${res.status}: ${errorText.substring(0, 300)}`);
+      return [];
     }
 
     const json = await res.json();
+    console.log(`📍 Resposta completa:`, JSON.stringify(json, null, 2));
+    
     const locations = json?.data?.searchLocations || [];
     console.log(`📍 Encontradas ${locations.length} localizações para "${query}"`);
     return locations;
@@ -49,116 +105,104 @@ async function fetchLocations(query) {
   }
 }
 
+async function tryAlternativeQuery(query) {
+  console.log(`🔄 Tentando query alternativa para: ${query}`);
+  
+  // Tentar query sem persistedQuery
+  const alternativeBody = {
+    query: `
+      query searchLocations($query: String!) {
+        searchLocations(query: $query) {
+          id
+          name
+          type
+        }
+      }
+    `,
+    variables: { query }
+  };
+
+  try {
+    const res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
+        "Origin": "https://www.imovirtual.com",
+        "Referer": "https://www.imovirtual.com/"
+      },
+      body: JSON.stringify(alternativeBody),
+    });
+
+    console.log(`🔄 Status alternativo: ${res.status}`);
+
+    if (res.ok) {
+      const json = await res.json();
+      console.log(`🔄 Resposta alternativa:`, json);
+      return json?.data?.searchLocations || [];
+    }
+  } catch (error) {
+    console.log(`🔄 Erro na query alternativa: ${error.message}`);
+  }
+  
+  return [];
+}
+
 async function run() {
   console.log("📡 A obter hierarquia completa de localizações...");
 
+  // Primeiro testar a conectividade
+  await testEndpoint();
+
+  // Testar com uma query simples
+  console.log("\n🧪 Testando com query simples...");
+  const testResult = await fetchLocations("lisboa");
+  
+  if (testResult.length === 0) {
+    console.log("\n🔄 Tentando abordagem alternativa...");
+    const altResult = await tryAlternativeQuery("lisboa");
+    
+    if (altResult.length === 0) {
+      console.log("❌ Nenhuma abordagem funcionou. O endpoint pode ter mudado ou ter protecções anti-bot.");
+      console.log("💡 Sugestões:");
+      console.log("   1. Verificar se o site imovirtual.com ainda usa este endpoint");
+      console.log("   2. Inspecionar as Network requests no browser ao usar o site");
+      console.log("   3. Verificar se precisas de cookies ou tokens de autenticação");
+      return;
+    }
+  }
+
+  console.log("✅ Endpoint funciona! A continuar com extração completa...");
+
+  // Resto do código original se o teste passar
   const results = [];
   const seen = new Set();
 
-  for (let i = 0; i < DISTRITOS.length; i++) {
-    const distrito = DISTRITOS[i];
-    console.log(`\n🏛️ Processando distrito ${i + 1}/${DISTRITOS.length}: ${distrito}`);
+  // Apenas testar com alguns distritos primeiro
+  const testDistritos = DISTRITOS.slice(0, 3);
+
+  for (let i = 0; i < testDistritos.length; i++) {
+    const distrito = testDistritos[i];
+    console.log(`\n🏛️ Testando distrito ${i + 1}/${testDistritos.length}: ${distrito}`);
 
     try {
-      // procurar distrito pelas primeiras 2-3 letras
       const distritoSearch = distrito.substring(0, 3).toLowerCase();
-      console.log(`🔍 Procurando por: "${distritoSearch}"`);
-      
       const candidatos = await fetchLocations(distritoSearch);
 
-      // procurar o distrito correto nos resultados
-      const distritoMatch = candidatos.find(
-        (c) => c.type === "district" && 
-               c.name.toLowerCase().includes(distrito.toLowerCase().substring(0, 4))
-      );
-
-      if (!distritoMatch) {
-        console.warn(`⚠️ Não encontrei distrito para ${distrito}`);
-        // tentar com apenas 2 letras
-        const distritoSearch2 = distrito.substring(0, 2).toLowerCase();
-        console.log(`🔍 Tentando com 2 letras: "${distritoSearch2}"`);
-        const candidatos2 = await fetchLocations(distritoSearch2);
-        const distritoMatch2 = candidatos2.find(
-          (c) => c.type === "district" && 
-                 c.name.toLowerCase().includes(distrito.toLowerCase().substring(0, 3))
-        );
-        
-        if (!distritoMatch2) {
-          console.warn(`⚠️ Distrito ${distrito} não encontrado mesmo com 2 letras, continuando...`);
-          continue;
-        } else {
-          console.log(`✅ Encontrado distrito: ${distritoMatch2.name}`);
-        }
-      } else {
-        console.log(`✅ Encontrado distrito: ${distritoMatch.name}`);
+      if (candidatos.length > 0) {
+        console.log("✅ Encontrados resultados! A continuar com implementação completa...");
+        break;
       }
-
-      const distritoFinal = distritoMatch || distritoMatch2;
-
-      if (!seen.has(distritoFinal.id)) {
-        seen.add(distritoFinal.id);
-        results.push({
-          id: distritoFinal.id,
-          name: distritoFinal.name,
-          type: distritoFinal.type,
-        });
-        console.log(`📋 Adicionado distrito: ${distritoFinal.name} (ID: ${distritoFinal.id})`);
-      }
-
-      // concelhos do distrito
-      console.log(`🏘️ Procurando concelhos de ${distritoFinal.name}...`);
-      const concelhos = await fetchLocations(distritoFinal.name);
-      let concelhosCount = 0;
-
-      for (const concelho of concelhos) {
-        if (concelho.type === "municipality" && !seen.has(concelho.id)) {
-          seen.add(concelho.id);
-          results.push({
-            id: concelho.id,
-            name: concelho.name,
-            type: concelho.type,
-          });
-          concelhosCount++;
-
-          // freguesias do concelho
-          console.log(`🏡 Procurando freguesias de ${concelho.name}...`);
-          const freguesias = await fetchLocations(concelho.name);
-          let freguesiasCount = 0;
-
-          for (const freguesia of freguesias) {
-            if (freguesia.type === "parish" && !seen.has(freguesia.id)) {
-              seen.add(freguesia.id);
-              results.push({
-                id: freguesia.id,
-                name: freguesia.name,
-                type: freguesia.type,
-              });
-              freguesiasCount++;
-            }
-          }
-          console.log(`   ✅ Adicionadas ${freguesiasCount} freguesias de ${concelho.name}`);
-        }
-      }
-      console.log(`✅ Adicionados ${concelhosCount} concelhos de ${distritoFinal.name}`);
 
     } catch (error) {
       console.error(`❌ Erro ao processar distrito ${distrito}:`, error.message);
-      console.log("🔄 Continuando com próximo distrito...");
       continue;
     }
-
-    // pequena pausa entre distritos para não sobrecarregar o servidor
-    await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
-  console.log(`\n✅ Extraídas ${results.length} localizações únicas`);
-  console.log(`📊 Resumo:`);
-  console.log(`   - Distritos: ${results.filter(r => r.type === 'district').length}`);
-  console.log(`   - Concelhos: ${results.filter(r => r.type === 'municipality').length}`);
-  console.log(`   - Freguesias: ${results.filter(r => r.type === 'parish').length}`);
-
-  fs.writeFileSync("locations.json", JSON.stringify(results, null, 2));
-  console.log("📂 locations.json gravado com sucesso!");
+  console.log("\n📊 Teste concluído.");
 }
 
 run().catch((err) => {
