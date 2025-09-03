@@ -426,3 +426,4 @@ Actor.main(async () => {
     console.log('🗂️ Resumo estruturado criado e guardado');
     console.log(`🎉 EXTRAÇÃO COMPLETA! Total de ${Object.keys(finalData).filter(k => k !== 'metadata').reduce((sum, key) => sum + finalData[key].length, 0)} localizações extraídas`);
 });
+
