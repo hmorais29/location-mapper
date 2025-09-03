@@ -67,7 +67,6 @@ const AUTOCOMPLETE_QUERY = `query autocomplete($query: String!, $ranking: Rankin
 async function makeGraphQLRequest(query) {
     console.log(`🔍 A pesquisar localizações para: ${query}`);
     
-    // Payload exato da captura do DevTools
     const payload = {
         extensions: {
             persistedQuery: {
@@ -88,7 +87,6 @@ async function makeGraphQLRequest(query) {
         }
     };
 
-    // Headers baseados na captura do DevTools
     const headers = {
         'accept': 'application/graphql-response+json, application/graphql+json, application/json, text/event-stream, multipart/mixed',
         'accept-encoding': 'gzip, deflate, br, zstd',
@@ -111,311 +109,291 @@ async function makeGraphQLRequest(query) {
             headers: headers,
             responseType: 'json',
             timeout: {
-                request: 30000
+                request: 25000
             },
             retry: {
-                limit: 2,
+                limit: 1,
                 methods: ['POST']
             },
             throwHttpErrors: false
         });
 
-        console.log(`✅ Resposta recebida com status: ${response.statusCode}`);
-        
         if (response.statusCode !== 200) {
-            console.log(`⚠️ Status não é 200:`, response.statusCode);
-            console.log(`📄 Resposta:`, JSON.stringify(response.body, null, 2));
+            console.log(`⚠️ Status ${response.statusCode} para "${query}"`);
             return null;
-        }
-        
-        if (response.body?.errors) {
-            console.log(`⚠️ Erros na resposta:`, response.body.errors);
         }
         
         return response.body;
     } catch (error) {
-        console.error(`❌ Erro na requisição para "${query}":`, error.message);
-        if (error.response) {
-            console.error(`📊 Status: ${error.response.statusCode}`);
-            console.error(`📄 Resposta:`, JSON.stringify(error.response.body, null, 2));
-        }
+        console.error(`❌ Erro para "${query}":`, error.message);
         return null;
     }
 }
 
-function processLocations(data, queryTerm) {
-    const locations = {
-        districts: new Set(),
-        councils: new Set(), 
-        parishes: new Set(),
-        neighborhoods: new Set()
-    };
+// Função para normalizar nomes para slugs
+function normalizeToSlug(name) {
+    return name
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '-')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
 
+// Função para gerar aliases (variações do nome)
+function generateAliases(name, fullName) {
+    const aliases = new Set([name]);
+    
+    // Adicionar nome completo sem a hierarquia
+    aliases.add(name);
+    
+    // Adicionar variações sem "e", "de", "da", etc.
+    const cleanName = name.replace(/\b(e|de|da|do|dos|das)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    if (cleanName !== name) {
+        aliases.add(cleanName);
+    }
+    
+    // Se tem hífen, adicionar partes separadas
+    if (name.includes('-')) {
+        name.split('-').forEach(part => {
+            part = part.trim();
+            if (part.length > 3) aliases.add(part);
+        });
+    }
+    
+    // Se tem "e", adicionar partes separadas
+    if (name.includes(' e ')) {
+        name.split(' e ').forEach(part => {
+            part = part.trim();
+            if (part.length > 3) aliases.add(part);
+        });
+    }
+    
+    return Array.from(aliases);
+}
+
+function processLocations(data, queryTerm, locationHierarchy) {
     if (!data?.data?.autocomplete?.locationsObjects) {
-        console.log(`⚠️ Sem dados de localização para "${queryTerm}"`);
-        return locations;
+        return;
     }
 
     const locationsObjects = data.data.autocomplete.locationsObjects;
     console.log(`📊 Processando ${locationsObjects.length} localizações para "${queryTerm}"`);
 
     for (const location of locationsObjects) {
-        const { id, detailedLevel, name, fullName, children } = location;
+        const { id, detailedLevel, name, fullName, children, parents } = location;
         
-        const locationData = {
-            id,
-            name,
-            fullName,
-            level: detailedLevel,
-            source: queryTerm
-        };
-
-        switch (detailedLevel) {
-            case 'district':
-                locations.districts.add(JSON.stringify(locationData));
-                console.log(`🏛️ Distrito: ${fullName}`);
-                break;
-            case 'council':
-                locations.councils.add(JSON.stringify(locationData));
-                console.log(`🏘️ Concelho: ${fullName}`);
-                break;
-            case 'parish':
-                locations.parishes.add(JSON.stringify(locationData));
-                console.log(`⛪ Freguesia: ${fullName}`);
-                break;
-            case 'neighborhood':
-                locations.neighborhoods.add(JSON.stringify(locationData));
-                console.log(`🏠 Bairro: ${fullName}`);
-                break;
-        }
-
-        // Processar children se existirem
-        if (children && Array.isArray(children)) {
-            for (const child of children) {
-                const childData = {
-                    id: child.id,
-                    name: child.name,
-                    fullName: child.fullName,
-                    level: child.detailedLevel,
-                    source: queryTerm,
-                    parent: fullName
-                };
-
-                switch (child.detailedLevel) {
-                    case 'parish':
-                        locations.parishes.add(JSON.stringify(childData));
-                        console.log(`  ⛪ Freguesia: ${child.fullName}`);
-                        break;
-                    case 'neighborhood':
-                        locations.neighborhoods.add(JSON.stringify(childData));
-                        console.log(`  🏠 Bairro: ${child.fullName}`);
-                        break;
-                }
-
-                // Processar grandchildren
-                if (child.children && Array.isArray(child.children)) {
-                    for (const grandChild of child.children) {
-                        if (grandChild.detailedLevel === 'neighborhood') {
-                            const grandChildData = {
-                                id: grandChild.id,
-                                name: grandChild.name,
-                                fullName: grandChild.fullName,
-                                level: grandChild.detailedLevel,
-                                source: queryTerm,
-                                parent: child.fullName
-                            };
-                            locations.neighborhoods.add(JSON.stringify(grandChildData));
-                            console.log(`    🏠 Bairro: ${grandChild.fullName}`);
-                        }
-                    }
+        // Extrair hierarquia dos parents
+        let districtName = '', districtSlug = '';
+        let councilName = '', councilSlug = '';
+        
+        if (parents && parents.length > 0) {
+            for (const parent of parents) {
+                if (parent.detailedLevel === 'district') {
+                    districtName = parent.name;
+                    districtSlug = normalizeToSlug(parent.name);
+                } else if (parent.detailedLevel === 'council') {
+                    councilName = parent.name;
+                    councilSlug = normalizeToSlug(parent.name);
                 }
             }
         }
-    }
 
-    return locations;
+        // Para distritos
+        if (detailedLevel === 'district') {
+            districtName = name;
+            districtSlug = normalizeToSlug(name);
+            if (!locationHierarchy[districtSlug]) {
+                locationHierarchy[districtSlug] = {};
+                console.log(`🏛️ Distrito: ${name} (${districtSlug})`);
+            }
+        }
+        
+        // Para concelhos
+        else if (detailedLevel === 'council' && districtSlug) {
+            councilName = name;
+            councilSlug = normalizeToSlug(name);
+            
+            if (!locationHierarchy[districtSlug]) {
+                locationHierarchy[districtSlug] = {};
+            }
+            if (!locationHierarchy[districtSlug][councilSlug]) {
+                locationHierarchy[districtSlug][councilSlug] = {};
+                console.log(`🏘️ Concelho: ${name} (${councilSlug}) em ${districtName}`);
+            }
+        }
+        
+        // Para freguesias e bairros
+        else if ((detailedLevel === 'parish' || detailedLevel === 'neighborhood') && districtSlug && councilSlug) {
+            const locationSlug = normalizeToSlug(name);
+            const aliases = generateAliases(name, fullName);
+            
+            if (!locationHierarchy[districtSlug]) {
+                locationHierarchy[districtSlug] = {};
+            }
+            if (!locationHierarchy[districtSlug][councilSlug]) {
+                locationHierarchy[districtSlug][councilSlug] = {};
+            }
+            
+            locationHierarchy[districtSlug][councilSlug][locationSlug] = aliases;
+            
+            const typeIcon = detailedLevel === 'parish' ? '⛪' : '🏠';
+            console.log(`${typeIcon} ${detailedLevel}: ${name} (${locationSlug}) em ${councilName}, ${districtName}`);
+        }
+
+        // Processar children recursivamente
+        if (children && Array.isArray(children)) {
+            for (const child of children) {
+                const childData = {
+                    data: {
+                        autocomplete: {
+                            locationsObjects: [child]
+                        }
+                    }
+                };
+                processLocations(childData, `${queryTerm}-child`, locationHierarchy);
+            }
+        }
+    }
 }
 
 Actor.main(async () => {
-    console.log('📡 A iniciar extração COMPLETA de localizações do Imovirtual...');
+    console.log('📡 A iniciar extração OTIMIZADA de localizações do Imovirtual...');
 
-    const allLocations = {
-        districts: new Set(),
-        councils: new Set(),
-        parishes: new Set(),
-        neighborhoods: new Set()
-    };
+    const locationHierarchy = {};
 
-    // FASE 1: Todos os distritos de Portugal
-    const allDistricts = [
+    // ESTRATÉGIA OTIMIZADA: Menos queries, mais eficazes
+    const strategicQueries = [
+        // Todos os distritos de Portugal
         'lisboa', 'porto', 'coimbra', 'braga', 'aveiro', 'faro', 'leiria',
         'santarem', 'setubal', 'viseu', 'viana do castelo', 'vila real',
         'braganca', 'castelo branco', 'evora', 'guarda', 'portalegre',
-        'beja', 'ilha da madeira', 'ilha de sao miguel', 'terceira'
+        'beja', 'madeira', 'sao miguel', 'terceira',
+        
+        // Principais concelhos por distrito (mais eficiente)
+        'sintra', 'cascais', 'oeiras', 'loures', 'amadora', 'odivelas', 'almada', 'seixal',
+        'matosinhos', 'vila nova de gaia', 'gondomar', 'maia', 'povoa de varzim',
+        'guimaraes', 'braga', 'famalicao', 'barcelos',
+        'figueira da foz', 'agueda', 'ilhavo', 'ovar',
+        'portimao', 'lagos', 'silves', 'albufeira', 'loule', 'tavira',
+        'caldas da rainha', 'torres vedras', 'obidos', 'marinha grande',
+        'torres novas', 'tomar', 'entroncamento', 'abrantes',
+        'palmela', 'montijo', 'sesimbra', 'alcochete',
+        'funchal', 'machico', 'ponta delgada', 'angra do heroismo'
     ];
 
-    // FASE 2: Principais cidades e concelhos para expandir cobertura
-    const majorCities = [
-        'amadora', 'sintra', 'cascais', 'oeiras', 'loures', 'odivelas', 'mafra',
-        'vila franca de xira', 'sesimbra', 'almada', 'seixal', 'barreiro',
-        'matosinhos', 'vila nova de gaia', 'gondomar', 'maia', 'valongo',
-        'povoa de varzim', 'felgueiras', 'pacos de ferreira', 'penafiel',
-        'figueira da foz', 'cantanhede', 'oliveira do bairro', 'agueda',
-        'ilhavo', 'ovar', 'santa maria da feira', 'sao joao da madeira',
-        'guimaraes', 'famalicao', 'barcelos', 'esposende', 'viana do castelo',
-        'ponte de lima', 'torres vedras', 'caldas da rainha', 'obidos',
-        'nazare', 'marinha grande', 'alcobaca', 'batalha', 'pombal',
-        'torres novas', 'entroncamento', 'tomar', 'constancia', 'abrantes',
-        'palmela', 'montijo', 'alcochete', 'moita', 'portimao', 'lagos',
-        'silves', 'albufeira', 'loule', 'tavira', 'vila real de santo antonio',
-        'olhao', 'lagoa', 'monchique', 'funchal', 'machico', 'camara de lobos',
-        'ponta delgada', 'ribeira grande', 'lagoa', 'angra do heroismo'
-    ];
-
-    // FASE 3: Termos genéricos para capturar localizações específicas
-    const genericTerms = [
-        'centro', 'baixa', 'alta', 'norte', 'sul', 'este', 'oeste',
-        'santo antonio', 'sao', 'santa', 'vila', 'aldeia', 'monte',
-        'praia', 'costa', 'serra', 'campo', 'jardim', 'parque'
-    ];
-
-    let allQueries = [...allDistricts, ...majorCities, ...genericTerms];
-    
     let successfulQueries = 0;
     let totalProcessed = 0;
 
-    console.log(`🎯 Total de queries a processar: ${allQueries.length}`);
+    console.log(`🎯 Queries estratégicas: ${strategicQueries.length}`);
 
-    for (const query of allQueries) {
+    for (const query of strategicQueries) {
         try {
-            console.log(`\n📄 Processando query ${totalProcessed + 1}/${allQueries.length}: "${query}"`);
+            console.log(`\n📄 [${totalProcessed + 1}/${strategicQueries.length}] "${query}"`);
             
             const data = await makeGraphQLRequest(query);
             
             if (data?.data?.autocomplete?.locationsObjects) {
-                const locations = processLocations(data, query);
-                
-                // Combinar resultados usando Sets para evitar duplicados
-                for (const item of locations.districts) allLocations.districts.add(item);
-                for (const item of locations.councils) allLocations.councils.add(item);
-                for (const item of locations.parishes) allLocations.parishes.add(item);
-                for (const item of locations.neighborhoods) allLocations.neighborhoods.add(item);
-                
+                processLocations(data, query, locationHierarchy);
                 successfulQueries++;
-                console.log(`✅ Query "${query}" processada com sucesso`);
+                console.log(`✅ "${query}" processada`);
             } else {
-                console.log(`⚠️ Sem dados válidos para "${query}"`);
+                console.log(`⚠️ Sem dados para "${query}"`);
             }
             
             totalProcessed++;
             
-            // Pausa variável para evitar rate limiting
-            const waitTime = totalProcessed % 10 === 0 ? 5000 : 2000; // Pausa maior a cada 10 queries
-            console.log(`⏳ Aguardando ${waitTime/1000} segundos...`);
+            // Pausa mais curta mas inteligente
+            const waitTime = totalProcessed % 15 === 0 ? 3000 : 1500;
+            console.log(`⏳ Pausa ${waitTime/1000}s...`);
             await new Promise(resolve => setTimeout(resolve, waitTime));
             
         } catch (error) {
-            console.error(`❌ Falha na query "${query}":`, error.message);
+            console.error(`❌ Falha "${query}":`, error.message);
             totalProcessed++;
             continue;
         }
     }
 
-    // FASE 4: Usar os concelhos encontrados para fazer queries mais específicas
-    console.log(`\n🔄 FASE 2: A expandir com base nos concelhos encontrados...`);
-    
-    const councilNames = Array.from(allLocations.councils)
-        .map(item => JSON.parse(item))
-        .map(council => council.name.toLowerCase())
-        .filter(name => !allQueries.map(q => q.toLowerCase()).includes(name))
-        .slice(0, 20); // Limitar para não sobrecarregar
+    // Contar totais
+    let totalDistricts = Object.keys(locationHierarchy).length;
+    let totalCouncils = 0;
+    let totalLocations = 0;
 
-    for (const councilName of councilNames) {
-        try {
-            console.log(`\n📄 Expandindo concelho: "${councilName}"`);
-            
-            const data = await makeGraphQLRequest(councilName);
-            
-            if (data?.data?.autocomplete?.locationsObjects) {
-                const locations = processLocations(data, councilName);
-                
-                for (const item of locations.districts) allLocations.districts.add(item);
-                for (const item of locations.councils) allLocations.councils.add(item);
-                for (const item of locations.parishes) allLocations.parishes.add(item);
-                for (const item of locations.neighborhoods) allLocations.neighborhoods.add(item);
-                
-                successfulQueries++;
-            }
-            
-            totalProcessed++;
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            
-        } catch (error) {
-            console.error(`❌ Falha na expansão "${councilName}":`, error.message);
-            totalProcessed++;
-            continue;
+    for (const district of Object.values(locationHierarchy)) {
+        totalCouncils += Object.keys(district).length;
+        for (const council of Object.values(district)) {
+            totalLocations += Object.keys(council).length;
         }
     }
 
-    // Converter Sets de volta para Arrays e parsear JSON
-    const finalData = {
-        districts: Array.from(allLocations.districts).map(item => JSON.parse(item)),
-        councils: Array.from(allLocations.councils).map(item => JSON.parse(item)),
-        parishes: Array.from(allLocations.parishes).map(item => JSON.parse(item)),
-        neighborhoods: Array.from(allLocations.neighborhoods).map(item => JSON.parse(item)),
-        metadata: {
-            extractedAt: new Date().toISOString(),
-            totalDistricts: allLocations.districts.size,
-            totalCouncils: allLocations.councils.size,
-            totalParishes: allLocations.parishes.size,
-            totalNeighborhoods: allLocations.neighborhoods.size,
-            successfulQueries: successfulQueries,
-            totalQueries: totalProcessed,
-            source: 'imovirtual.com',
-            endpoint: IMOVIRTUAL_API
-        }
-    };
-
-    console.log('\n📊 EXTRAÇÃO COMPLETA CONCLUÍDA!');
+    console.log('\n📊 EXTRAÇÃO OTIMIZADA CONCLUÍDA!');
     console.log('=====================================');
-    console.log(`🏛️ Distritos encontrados: ${finalData.metadata.totalDistricts}`);
-    console.log(`🏘️ Concelhos encontrados: ${finalData.metadata.totalCouncils}`);
-    console.log(`⛪ Freguesias encontradas: ${finalData.metadata.totalParishes}`);
-    console.log(`🏠 Bairros encontrados: ${finalData.metadata.totalNeighborhoods}`);
+    console.log(`🏛️ Distritos: ${totalDistricts}`);
+    console.log(`🏘️ Concelhos: ${totalCouncils}`);
+    console.log(`⛪🏠 Freguesias/Bairros: ${totalLocations}`);
     console.log(`✅ Queries bem-sucedidas: ${successfulQueries}/${totalProcessed}`);
     console.log('=====================================');
 
-    // Verificar se encontramos Loures e suas freguesias
-    const louresResults = finalData.parishes.filter(p => 
-        p.fullName.toLowerCase().includes('loures') || 
-        p.fullName.toLowerCase().includes('santo antonio dos cavaleiros')
-    );
-    
-    if (louresResults.length > 0) {
-        console.log('\n🎯 Freguesias de Loures encontradas:');
-        louresResults.forEach(parish => {
-            console.log(`  ✅ ${parish.fullName}`);
+    // Verificar se encontrou Loures específico
+    const louresCheck = locationHierarchy['lisboa']?.['loures'];
+    if (louresCheck) {
+        console.log('\n🎯 Localizações em Loures encontradas:');
+        Object.keys(louresCheck).forEach(slug => {
+            const aliases = louresCheck[slug];
+            console.log(`  ✅ ${slug}: ${aliases.join(', ')}`);
         });
     }
 
-    // Guardar no dataset do Apify
-    await Actor.pushData(finalData);
+    // DADOS PRINCIPAIS: locations.json para o outro scraper
+    const locationsJsonData = {
+        locations: locationHierarchy,
+        metadata: {
+            extractedAt: new Date().toISOString(),
+            totalDistricts: totalDistricts,
+            totalCouncils: totalCouncils,
+            totalLocations: totalLocations,
+            successfulQueries: successfulQueries,
+            totalQueries: totalProcessed,
+            source: 'imovirtual.com'
+        }
+    };
+
+    await Actor.pushData(locationsJsonData);
+    console.log('💾 locations.json guardado no dataset principal');
+
+    // DADOS ADICIONAIS: Estrutura expandida para análise
+    const expandedData = [];
     
-    console.log('💾 Dados guardados no dataset do Apify');
+    for (const [districtSlug, councils] of Object.entries(locationHierarchy)) {
+        for (const [councilSlug, locations] of Object.entries(councils)) {
+            for (const [locationSlug, aliases] of Object.entries(locations)) {
+                expandedData.push({
+                    type: 'location',
+                    district: districtSlug,
+                    council: councilSlug,
+                    slug: locationSlug,
+                    aliases: aliases,
+                    url_path: `${districtSlug}/${councilSlug}/${locationSlug}`,
+                    primary_name: aliases[0]
+                });
+            }
+        }
+    }
+
+    for (const item of expandedData) {
+        await Actor.pushData(item);
+    }
+
+    console.log(`✅ ${expandedData.length} localizações individuais também guardadas`);
     
-    // Também guardar dados individuais para facilitar análise
-    for (const district of finalData.districts) {
-        await Actor.pushData({ type: 'district', ...district });
-    }
-    for (const council of finalData.councils) {
-        await Actor.pushData({ type: 'council', ...council });
-    }
-    for (const parish of finalData.parishes) {
-        await Actor.pushData({ type: 'parish', ...parish });
-    }
-    for (const neighborhood of finalData.neighborhoods) {
-        await Actor.pushData({ type: 'neighborhood', ...neighborhood });
-    }
+    // Salvar também apenas o locationHierarchy para usar diretamente como locations.json
+    await Actor.pushData({
+        format: 'locations_json_only',
+        data: locationHierarchy
+    });
     
-    console.log('✅ Dados individuais também guardados para facilitar análise');
+    console.log('📁 Formato locations.json puro também guardado');
 });
