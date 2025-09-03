@@ -153,7 +153,6 @@ function processLocations(data, queryTerm) {
 
     if (!data?.data?.autocomplete?.locationsObjects) {
         console.log(`⚠️ Sem dados de localização para "${queryTerm}"`);
-        console.log('Estrutura recebida:', JSON.stringify(data, null, 2));
         return locations;
     }
 
@@ -238,24 +237,7 @@ function processLocations(data, queryTerm) {
 }
 
 Actor.main(async () => {
-    console.log('📡 A iniciar extração de localizações do Imovirtual...');
-
-    // Testar conectividade primeiro
-    try {
-        const testResponse = await gotScraping.get('https://www.imovirtual.com/', { 
-            timeout: {
-                request: 10000
-            },
-            headers: {
-                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36'
-            },
-            throwHttpErrors: false
-        });
-        console.log(`✅ Site principal acessível: ${testResponse.statusCode}`);
-    } catch (error) {
-        console.error('❌ Erro ao aceder ao site principal:', error.message);
-        console.log('🔄 Continuando mesmo assim...');
-    }
+    console.log('📡 A iniciar extração COMPLETA de localizações do Imovirtual...');
 
     const allLocations = {
         districts: new Set(),
@@ -264,17 +246,49 @@ Actor.main(async () => {
         neighborhoods: new Set()
     };
 
-    // Queries principais para Portugal - começar pequeno para testar
-    const mainQueries = [
-        'lisboa', 'porto', 'coimbra', 'braga', 'setúbal'
+    // FASE 1: Todos os distritos de Portugal
+    const allDistricts = [
+        'lisboa', 'porto', 'coimbra', 'braga', 'aveiro', 'faro', 'leiria',
+        'santarem', 'setubal', 'viseu', 'viana do castelo', 'vila real',
+        'braganca', 'castelo branco', 'evora', 'guarda', 'portalegre',
+        'beja', 'ilha da madeira', 'ilha de sao miguel', 'terceira'
     ];
 
+    // FASE 2: Principais cidades e concelhos para expandir cobertura
+    const majorCities = [
+        'amadora', 'sintra', 'cascais', 'oeiras', 'loures', 'odivelas', 'mafra',
+        'vila franca de xira', 'sesimbra', 'almada', 'seixal', 'barreiro',
+        'matosinhos', 'vila nova de gaia', 'gondomar', 'maia', 'valongo',
+        'povoa de varzim', 'felgueiras', 'pacos de ferreira', 'penafiel',
+        'figueira da foz', 'cantanhede', 'oliveira do bairro', 'agueda',
+        'ilhavo', 'ovar', 'santa maria da feira', 'sao joao da madeira',
+        'guimaraes', 'famalicao', 'barcelos', 'esposende', 'viana do castelo',
+        'ponte de lima', 'torres vedras', 'caldas da rainha', 'obidos',
+        'nazare', 'marinha grande', 'alcobaca', 'batalha', 'pombal',
+        'torres novas', 'entroncamento', 'tomar', 'constancia', 'abrantes',
+        'palmela', 'montijo', 'alcochete', 'moita', 'portimao', 'lagos',
+        'silves', 'albufeira', 'loule', 'tavira', 'vila real de santo antonio',
+        'olhao', 'lagoa', 'monchique', 'funchal', 'machico', 'camara de lobos',
+        'ponta delgada', 'ribeira grande', 'lagoa', 'angra do heroismo'
+    ];
+
+    // FASE 3: Termos genéricos para capturar localizações específicas
+    const genericTerms = [
+        'centro', 'baixa', 'alta', 'norte', 'sul', 'este', 'oeste',
+        'santo antonio', 'sao', 'santa', 'vila', 'aldeia', 'monte',
+        'praia', 'costa', 'serra', 'campo', 'jardim', 'parque'
+    ];
+
+    let allQueries = [...allDistricts, ...majorCities, ...genericTerms];
+    
     let successfulQueries = 0;
     let totalProcessed = 0;
 
-    for (const query of mainQueries) {
+    console.log(`🎯 Total de queries a processar: ${allQueries.length}`);
+
+    for (const query of allQueries) {
         try {
-            console.log(`\n📄 Processando query ${totalProcessed + 1}/${mainQueries.length}: "${query}"`);
+            console.log(`\n📄 Processando query ${totalProcessed + 1}/${allQueries.length}: "${query}"`);
             
             const data = await makeGraphQLRequest(query);
             
@@ -291,19 +305,53 @@ Actor.main(async () => {
                 console.log(`✅ Query "${query}" processada com sucesso`);
             } else {
                 console.log(`⚠️ Sem dados válidos para "${query}"`);
-                if (data) {
-                    console.log('Resposta completa:', JSON.stringify(data, null, 2));
-                }
             }
             
             totalProcessed++;
             
-            // Pausa entre requests para evitar rate limiting
-            console.log('⏳ Aguardando 3 segundos...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            // Pausa variável para evitar rate limiting
+            const waitTime = totalProcessed % 10 === 0 ? 5000 : 2000; // Pausa maior a cada 10 queries
+            console.log(`⏳ Aguardando ${waitTime/1000} segundos...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
             
         } catch (error) {
             console.error(`❌ Falha na query "${query}":`, error.message);
+            totalProcessed++;
+            continue;
+        }
+    }
+
+    // FASE 4: Usar os concelhos encontrados para fazer queries mais específicas
+    console.log(`\n🔄 FASE 2: A expandir com base nos concelhos encontrados...`);
+    
+    const councilNames = Array.from(allLocations.councils)
+        .map(item => JSON.parse(item))
+        .map(council => council.name.toLowerCase())
+        .filter(name => !allQueries.map(q => q.toLowerCase()).includes(name))
+        .slice(0, 20); // Limitar para não sobrecarregar
+
+    for (const councilName of councilNames) {
+        try {
+            console.log(`\n📄 Expandindo concelho: "${councilName}"`);
+            
+            const data = await makeGraphQLRequest(councilName);
+            
+            if (data?.data?.autocomplete?.locationsObjects) {
+                const locations = processLocations(data, councilName);
+                
+                for (const item of locations.districts) allLocations.districts.add(item);
+                for (const item of locations.councils) allLocations.councils.add(item);
+                for (const item of locations.parishes) allLocations.parishes.add(item);
+                for (const item of locations.neighborhoods) allLocations.neighborhoods.add(item);
+                
+                successfulQueries++;
+            }
+            
+            totalProcessed++;
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+        } catch (error) {
+            console.error(`❌ Falha na expansão "${councilName}":`, error.message);
             totalProcessed++;
             continue;
         }
@@ -322,20 +370,33 @@ Actor.main(async () => {
             totalParishes: allLocations.parishes.size,
             totalNeighborhoods: allLocations.neighborhoods.size,
             successfulQueries: successfulQueries,
-            totalQueries: mainQueries.length,
+            totalQueries: totalProcessed,
             source: 'imovirtual.com',
             endpoint: IMOVIRTUAL_API
         }
     };
 
-    console.log('\n📊 EXTRAÇÃO CONCLUÍDA!');
+    console.log('\n📊 EXTRAÇÃO COMPLETA CONCLUÍDA!');
     console.log('=====================================');
     console.log(`🏛️ Distritos encontrados: ${finalData.metadata.totalDistricts}`);
     console.log(`🏘️ Concelhos encontrados: ${finalData.metadata.totalCouncils}`);
     console.log(`⛪ Freguesias encontradas: ${finalData.metadata.totalParishes}`);
     console.log(`🏠 Bairros encontrados: ${finalData.metadata.totalNeighborhoods}`);
-    console.log(`✅ Queries bem-sucedidas: ${successfulQueries}/${mainQueries.length}`);
+    console.log(`✅ Queries bem-sucedidas: ${successfulQueries}/${totalProcessed}`);
     console.log('=====================================');
+
+    // Verificar se encontramos Loures e suas freguesias
+    const louresResults = finalData.parishes.filter(p => 
+        p.fullName.toLowerCase().includes('loures') || 
+        p.fullName.toLowerCase().includes('santo antonio dos cavaleiros')
+    );
+    
+    if (louresResults.length > 0) {
+        console.log('\n🎯 Freguesias de Loures encontradas:');
+        louresResults.forEach(parish => {
+            console.log(`  ✅ ${parish.fullName}`);
+        });
+    }
 
     // Guardar no dataset do Apify
     await Actor.pushData(finalData);
