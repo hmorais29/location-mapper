@@ -67,14 +67,8 @@ const AUTOCOMPLETE_QUERY = `query autocomplete($query: String!, $ranking: Rankin
 async function makeGraphQLRequest(query, retries = 3) {
     console.log(`🔍 A pesquisar localizações para: ${query}`);
     
+    // Payload simplificado sem persisted query hash
     const payload = {
-        extensions: {
-            persistedQuery: {
-                miss: true,
-                sha256Hash: "63dfe8182f8cd71a2493912ed138c743f8fdb43e741e11aff9e53bc34b85c9d6",
-                version: 1
-            }
-        },
         operationName: "autocomplete",
         query: AUTOCOMPLETE_QUERY,
         variables: {
@@ -426,4 +420,3 @@ Actor.main(async () => {
     console.log('🗂️ Resumo estruturado criado e guardado');
     console.log(`🎉 EXTRAÇÃO COMPLETA! Total de ${Object.keys(finalData).filter(k => k !== 'metadata').reduce((sum, key) => sum + finalData[key].length, 0)} localizações extraídas`);
 });
-
